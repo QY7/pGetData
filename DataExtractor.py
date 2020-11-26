@@ -1,9 +1,10 @@
 from PIL import Image
+from PIL import ImageGrab
 import cv2
 import numpy
 from enum import Enum
 import matplotlib.pyplot as plt
-
+from math import log10
 # 18, 121, 190
 _red_lim = [10,30]
 _green_lim = [100,150]
@@ -20,20 +21,20 @@ class DataExtractor:
         self._blue_lim = [0,20]
         self._fuzzy_range = 50 #fuzzy range refers to picking range(0~255)
         self._step = 10
-        self._x1 = 36
-        self._x2 = 587
-        self._y1 = 6
-        self._y2 = 423
+        # self._x1 = 0
+        # self._x2 = 580
+        # self._y1 = 13
+        # self._y2 = 430
         self._filter_size = 3
         self.width = 0
         self.height = 0
         self.startX = 0.5#从datasheet读取的数据
-        self.startY = 0 # 从datasheet读取的数据
-        self.endX =5
-        self.endY = 340
-        self.image_width = self._x2-self._x1
-        self.image_height = self._y2-self._y1
-        self.axis_type = AxisType.LINEAR
+        self.startY = 1 # 从datasheet读取的数据
+        self.endX =100
+        self.endY = 4000
+
+        self.xaxis_type = AxisType.LINEAR
+        self.yaxis_type = AxisType.LOG
 
     def set_fuzzy_color_range(self,pixdata):
         self._red_lim[0] = pixdata[0] - self._fuzzy_range if pixdata[0]>self._fuzzy_range else 0
@@ -43,6 +44,7 @@ class DataExtractor:
         self._blue_lim[0] = pixdata[2] - self._fuzzy_range if pixdata[2]>self._fuzzy_range else 0
         self._blue_lim[1] = pixdata[2] + self._fuzzy_range if pixdata[2]<255-self._fuzzy_range else 255
 
+    # 筛选颜色范围
     def check_valid(self,pixdata):
         if(pixdata[0]<self._red_lim[0] or pixdata[0]>self._red_lim[1]):
             return False
@@ -52,11 +54,12 @@ class DataExtractor:
             return False
         return True
 
-    def filter_color_range(self,image):
-        img = image
+    def filter_color_range(self,img):
         original_image = numpy.array(img)#转换为cv2能用的格式
+        self.image_width = img.size[0]
+        self.image_height = img.size[1]
         pixdata = img.load()
-        cv2.imshow("original",original_image)
+        # cv2.imshow("original",original_image)
 
         for y in range(img.size[1]):
             for x in range(img.size[0]):
@@ -68,13 +71,21 @@ class DataExtractor:
                     
         image = numpy.array(img)#转换为cv2能用的格式
         image = image[:, :, :].copy()
-        cv2.imshow("color_filter",image)
+        # cv2.imshow("color_filter",image)
         
         # result是一个y*x*color_channel的数组
-        result = self.remove_grid(img)
+        result_wo_grid = self.remove_grid(img)
 
-        return result
+        return result_wo_grid
 
+    def set_axis_type(self,xtype = AxisType.LINEAR,ytype = AxisType.LINEAR):
+        self.xaxis_type = xtype
+        self.yaxis_type = ytype
+
+    def set_axis_range(self,custom_range):
+        # x1 x2 y1 y2
+        [self.startX,self.endX,self.startY,self.endY] = custom_range
+        
     def remove_grid(self,pixdata):
         image = numpy.array(pixdata)
         image = image[:, :, :].copy()  
@@ -86,15 +97,14 @@ class DataExtractor:
         result = cv2.erode(thresh,horizontal_kernel)
         return result
 
-    def extract(self,file_name):
-        img = Image.open(file_name)
-        img = img.convert("RGB")
+    def extract(self,img):
         # self.width = img.size[0]
         # self.height = img.size[1]
         # 根据颜色范围选择要用到的数据
         binary_data = self.filter_color_range(img)
         # 去除边界
-        binary_data_without_border = self.remove_boarder(binary_data,[self._x1,self._x2,self._y1,self._y2])
+        binary_data_without_border = binary_data
+        # binary_data_without_border = self.remove_boarder(binary_data,[self._x1,self._x2,self._y1,self._y2])
         # 提取数据点
         extracted_data = self.extract_data(binary_data_without_border)
         # 绘制数据点
@@ -120,15 +130,26 @@ class DataExtractor:
         return numpy.array(result)
 
     def data_mapping(self,data,axis_type = AxisType.LINEAR):
-        if(self.axis_type == AxisType.LINEAR):
+        if(self.xaxis_type == AxisType.LINEAR):
             data[:,0] = data[:,0]/self.image_width*(self.endX-self.startX)+self.startX
+        else:
+            data[:,0] = numpy.power(10,(data[:,0]/self.image_width*(log10(self.endX)-log10(self.startX))+log10(self.startX)))
+        if(self.yaxis_type == AxisType.LINEAR):
             data[:,1] = data[:,1]/self.image_height*(self.endY-self.startY)+self.startY
+        else:
+            data[:,1] = numpy.power(10,(data[:,1]/self.image_height*(log10(self.endY)-log10(self.startY))+log10(self.startY)))
+
         return data
 
     def plot_value(self,data):
         mapped_data = self.data_mapping(data)
         plt.figure(figsize=(5,5))
-        plt.plot(mapped_data[:,0],mapped_data[:,1],"-x",label="$sin(x)$",color="red",linewidth=2)
+        plt.plot(mapped_data[:,0],mapped_data[:,1],"-o",color="red",linewidth=2)
+
+        if(self.xaxis_type == AxisType.LOG):
+            plt.xscale("log")
+        if(self.yaxis_type == AxisType.LOG):
+            plt.yscale("log")
         plt.xlabel("x")
         plt.ylabel("y")
         plt.title("Extract Data")
@@ -137,10 +158,34 @@ class DataExtractor:
         plt.grid()
         plt.show()
 
-        
-
 d1 = DataExtractor()
-d1.set_fuzzy_color_range([237, 34, 36])
-d1.extract('img/7.jpg')
+
+def hex2rgb(hex_val):
+    h = hex_val.lstrip('#')
+    return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+
+
+
+
+
+img = ImageGrab.grabclipboard()
+
+d1.set_axis_type(xtype = AxisType.LINEAR,ytype = AxisType.LINEAR)
+# img = Image.open('img/10.jpg')
+color = input('input color:\n')
+d1.set_fuzzy_color_range(hex2rgb(color))
+
+xmin = float(input('minimal x:\n'))
+xmax = float(input("maximum x:\n"))
+ymin = float(input("minimal y:\n"))
+ymax = float(input("maximum y:\n"))
+
+d1.xaxis_type = AxisType.LOG if input("X Log?") == 'y' else AxisType.LINEAR
+d1.yaxis_type = AxisType.LOG if input("Y Log?") == 'y' else AxisType.LINEAR
+
+d1.set_axis_range([xmin,xmax,ymin,ymax])
+# print(hex2rgb('#ae81ff'))
+# d1.set_fuzzy_color_range([237, 34, 36])
+
+d1.extract(img)
 cv2.waitKey()
-# 780*439
