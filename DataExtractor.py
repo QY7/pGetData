@@ -97,19 +97,6 @@ class DataExtractor:
         result = cv2.erode(thresh,horizontal_kernel)
         return result
 
-    def extract(self,img):
-        # self.width = img.size[0]
-        # self.height = img.size[1]
-        # 根据颜色范围选择要用到的数据
-        binary_data = self.filter_color_range(img)
-        # 去除边界
-        binary_data_without_border = binary_data
-        # binary_data_without_border = self.remove_boarder(binary_data,[self._x1,self._x2,self._y1,self._y2])
-        # 提取数据点
-        extracted_data = self.extract_data(binary_data_without_border)
-        # 绘制数据点
-        self.plot_value(extracted_data)
-
     def remove_boarder(self,data,filter_range):
         # filterrange，四元向量，分别是x1,x2,y1,y2
         return data[filter_range[2]:filter_range[3],filter_range[0]:filter_range[1]]
@@ -129,7 +116,7 @@ class DataExtractor:
         # print(numpy.array(result))
         return numpy.array(result)
 
-    def data_mapping(self,data,axis_type = AxisType.LINEAR):
+    def data_mapping(self,data):
         if(self.xaxis_type == AxisType.LINEAR):
             data[:,0] = data[:,0]/self.image_width*(self.endX-self.startX)+self.startX
         else:
@@ -140,38 +127,53 @@ class DataExtractor:
             data[:,1] = numpy.power(10,(data[:,1]/self.image_height*(log10(self.endY)-log10(self.startY))+log10(self.startY)))
 
         return data
+    def extract(self,img):
+        # self.width = img.size[0]
+        # self.height = img.size[1]
+        # 根据颜色范围选择要用到的数据
+        binary_data = self.filter_color_range(img)
+        # 去除边界
+        binary_data_without_border = binary_data
+        # binary_data_without_border = self.remove_boarder(binary_data,[self._x1,self._x2,self._y1,self._y2])
+        # 提取数据点
+        extracted_data = self.extract_data(binary_data_without_border)
+        # 数据点映射坐标
+        mapped_data = self.data_mapping(extracted_data)
+        return mapped_data
 
-    def plot_value(self,data):
-        mapped_data = self.data_mapping(data)
-        plt.figure(figsize=(5,5))
-        plt.plot(mapped_data[:,0],mapped_data[:,1],"-o",color="red",linewidth=2)
+def plot_value(data,xlim = None, ylim = None,xaxis_type = AxisType.LINEAR,yaxis_type = AxisType.LINEAR):
+    plt.figure(figsize=(5,5))
+    plt.plot(data[:,0],data[:,1],"-o",color="red",linewidth=2)
 
-        if(self.xaxis_type == AxisType.LOG):
-            plt.xscale("log")
-        if(self.yaxis_type == AxisType.LOG):
-            plt.yscale("log")
-        plt.xlabel("x")
-        plt.ylabel("y")
-        plt.title("Extract Data")
+    if(xaxis_type == AxisType.LOG):
+        plt.xscale("log")
+    if(yaxis_type == AxisType.LOG):
+        plt.yscale("log")
+    plt.xlabel("x")
+    plt.ylabel("y")
+    plt.title("Extract Data")
+    if(xlim):
         plt.ylim(self.startY,self.endY)
+    if(ylim):
         plt.xlim(self.startX,self.endX)
-        plt.grid()
-        plt.show()
-
-d1 = DataExtractor()
-
+    plt.grid()
+    plt.show()
+            
 def hex2rgb(hex_val):
     h = hex_val.lstrip('#')
     return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
 
+d1 = DataExtractor()
+#读取文件
+img = Image.open('img/10.jpg')
+d1.set_fuzzy_color_range([237, 34, 36])
 
 
-
-
+'''
+# 读取剪切板
 img = ImageGrab.grabclipboard()
 
 d1.set_axis_type(xtype = AxisType.LINEAR,ytype = AxisType.LINEAR)
-# img = Image.open('img/10.jpg')
 color = input('input color:\n')
 d1.set_fuzzy_color_range(hex2rgb(color))
 
@@ -184,8 +186,10 @@ d1.xaxis_type = AxisType.LOG if input("X Log?") == 'y' else AxisType.LINEAR
 d1.yaxis_type = AxisType.LOG if input("Y Log?") == 'y' else AxisType.LINEAR
 
 d1.set_axis_range([xmin,xmax,ymin,ymax])
-# print(hex2rgb('#ae81ff'))
-# d1.set_fuzzy_color_range([237, 34, 36])
+print(hex2rgb('#ae81ff'))
+'''
+result = d1.extract(img)
+numpy.savetxt("test.txt",result)
+plot_value(result,xaxis_type=AxisType.LINEAR,yaxis_type=AxisType.LOG)
 
-d1.extract(img)
 cv2.waitKey()
