@@ -5,6 +5,7 @@ import numpy
 from enum import Enum
 import matplotlib.pyplot as plt
 from math import log10
+
 # 18, 121, 190
 _red_lim = [10,30]
 _green_lim = [100,150]
@@ -21,11 +22,12 @@ class DataExtractor:
         self._blue_lim = [0,20]
         self._fuzzy_range = 50 #fuzzy range refers to picking range(0~255)
         self._step = 10
+        self._blend_transparency = 0.2
         # self._x1 = 0
         # self._x2 = 580
         # self._y1 = 13
         # self._y2 = 430
-        self._filter_size = 3
+        self._filter_size = 1
         self.width = 0
         self.height = 0
         self.startX = 0.5#从datasheet读取的数据
@@ -35,6 +37,9 @@ class DataExtractor:
 
         self.xaxis_type = AxisType.LINEAR
         self.yaxis_type = AxisType.LOG
+
+        self.original_img  = 0
+        
 
     def set_fuzzy_color_range(self,pixdata):
         self._red_lim[0] = pixdata[0] - self._fuzzy_range if pixdata[0]>self._fuzzy_range else 0
@@ -71,7 +76,7 @@ class DataExtractor:
                     
         image = numpy.array(img)#转换为cv2能用的格式
         image = image[:, :, :].copy()
-        # cv2.imshow("color_filter",image)
+        cv2.imshow("color_filter",image)
         
         # result是一个y*x*color_channel的数组
         result_wo_grid = self.remove_grid(img)
@@ -127,19 +132,54 @@ class DataExtractor:
             data[:,1] = numpy.power(10,(data[:,1]/self.image_height*(log10(self.endY)-log10(self.startY))+log10(self.startY)))
 
         return data
+
+    def erase_noise(self,event,x,y,flags,param):
+        global drawing_mode
+        
+        if event == cv2.EVENT_LBUTTONDOWN:
+            drawing_mode = True
+        if event == cv2.EVENT_MOUSEMOVE and drawing_mode:
+            self.binary_data_without_border[y-10:y+10,x-10:x+10]=0
+            blender=cv2.addWeighted(self.original_img,self._blend_transparency,numpy.tile(self.binary_data_without_border[:,:,numpy.newaxis],3),0.9,0)
+            cv2.imshow("masked image",blender)
+        if event == cv2.EVENT_LBUTTONUP:
+            drawing_mode = False
+            # cv2.imshow("extracted image",self.binary_data_without_border)
+        # mouseX,mouseY = x,y
+
     def extract(self,img):
         # self.width = img.size[0]
         # self.height = img.size[1]
         # 根据颜色范围选择要用到的数据
+        self.original_img = numpy.array(img)#转换为cv2能用的格式
+        self.original_img  = self.original_img [:, :, :].copy()
+
+        self.original_img = cv2.cvtColor(self.original_img, cv2.COLOR_BGR2RGB)
+
         binary_data = self.filter_color_range(img)
         # 去除边界
-        binary_data_without_border = binary_data
+        self.binary_data_without_border = binary_data
         # binary_data_without_border = self.remove_boarder(binary_data,[self._x1,self._x2,self._y1,self._y2])
         # 提取数据点
-        extracted_data = self.extract_data(binary_data_without_border)
-        # 数据点映射坐标
-        mapped_data = self.data_mapping(extracted_data)
-        return mapped_data
+
+        blender=cv2.addWeighted(self.original_img,self._blend_transparency,numpy.tile(self.binary_data_without_border[:,:,numpy.newaxis],3),0.9,0)
+        cv2.imshow("masked image",blender)
+        mask_area = numpy.array([])
+
+        cv2.setMouseCallback('masked image',self.erase_noise)
+        while(1):
+            k = cv2.waitKey(20) & 0xFF
+            if k == 27:
+                break
+
+            elif k == 13:
+                # cv2.imshow("after",self.binary_data_without_border)
+                print(mask_area)
+                extracted_data = self.extract_data(self.binary_data_without_border)
+                # 数据点映射坐标
+                mapped_data = self.data_mapping(extracted_data)
+                return mapped_data
+
 
 def plot_value(data,xlim = None, ylim = None,xaxis_type = AxisType.LINEAR,yaxis_type = AxisType.LINEAR):
     plt.figure(figsize=(5,5))
@@ -164,14 +204,19 @@ def hex2rgb(hex_val):
     return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
 
 d1 = DataExtractor()
-#读取文件
-img = Image.open('img/10.jpg')
-d1.set_fuzzy_color_range([237, 34, 36])
+# #读取文件
+# img = Image.open('img/8.jpg')
+# d1.set_fuzzy_color_range([237, 34, 36])
 
+drawing_mode = False
 
-'''
-# 读取剪切板
+print("读取剪切板中")
 img = ImageGrab.grabclipboard()
+# 读取剪切板
+if len(numpy.array(img).shape)!=3:
+    print("剪切板无图片")
+    exit(0)
+# if(img.shape == (3,3,))
 
 d1.set_axis_type(xtype = AxisType.LINEAR,ytype = AxisType.LINEAR)
 color = input('input color:\n')
@@ -187,9 +232,9 @@ d1.yaxis_type = AxisType.LOG if input("Y Log?") == 'y' else AxisType.LINEAR
 
 d1.set_axis_range([xmin,xmax,ymin,ymax])
 print(hex2rgb('#ae81ff'))
-'''
+
 result = d1.extract(img)
 numpy.savetxt("test.txt",result)
-plot_value(result,xaxis_type=AxisType.LINEAR,yaxis_type=AxisType.LOG)
+plot_value(result,xaxis_type=AxisType.LINEAR,yaxis_type=AxisType.LINEAR)
 
 cv2.waitKey()
