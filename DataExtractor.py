@@ -1,10 +1,11 @@
 
 import cv2
 # from cv2 import cvtColor,imshow,threshold,erode,getStructuringElement,MORPH_RECT,THRESH_OTSU,THRESH_BINARY_INV,COLOR_BGR2GRAY
-from numpy import array,median,argwhere,power,tile,newaxis,savetxt
+from numpy import array,median,argwhere,power,tile,newaxis,savetxt,uint8
 from enum import Enum
 from math import log10
-
+import numpy as np
+import keyboard
 # 18, 121, 190
 _red_lim = [10,30]
 _green_lim = [100,150]
@@ -16,98 +17,78 @@ class AxisType(Enum):
 
 class DataExtractor:
     def __init__(self):
-        self._red_lim = [0,20]
-        self._green_lim = [0,20]
-        self._blue_lim = [0,20]
+        self.lower_color_lim = [0,0,0]
+        self.higher_color_lim = [255,255,255]
+
         self._fuzzy_range = 50 #fuzzy range refers to picking range(0~255)
         self._step = 10
-        self._blend_transparency = 0.2
-        # self._x1 = 0
-        # self._x2 = 580
-        # self._y1 = 13
-        # self._y2 = 430
-        self._filter_size = 1
-        self.width = 0
-        self.height = 0
-        self.startX = 0.5#从datasheet读取的数据
-        self.startY = 1 # 从datasheet读取的数据
-        self.endX =100
-        self.endY = 4000
+        self._blend_transparency = 0.3
+        self.grid_size = 3
+        self.image_width = 0
+        self.image_height = 0
+        self.startX = 0.5 #x坐标最小
+        self.startY = 1 #x坐标最大
+        self.endX =100 #y坐标最小
+        self.endY = 4000 #y坐标最大
 
         self.xaxis_type = AxisType.LINEAR
-        self.yaxis_type = AxisType.LOG
+        self.yaxis_type = AxisType.LINEAR
 
         self.original_img  = 0
         self.color_set = None
-        self.erase_range = 15
+        self.erase_range = 5
         self.drawing_mode = False
         
-
     def set_fuzzy_color_range(self,pixdata):
-        self._red_lim[0] = pixdata[0] - self._fuzzy_range if pixdata[0]>self._fuzzy_range else 0
-        self._red_lim[1] = pixdata[0] + self._fuzzy_range if pixdata[0]<255-self._fuzzy_range else 255
-        self._green_lim[0] = pixdata[1] - self._fuzzy_range if pixdata[1]>self._fuzzy_range else 0
-        self._green_lim[1] = pixdata[1] + self._fuzzy_range if pixdata[1]<255-self._fuzzy_range else 255
-        self._blue_lim[0] = pixdata[2] - self._fuzzy_range if pixdata[2]>self._fuzzy_range else 0
-        self._blue_lim[1] = pixdata[2] + self._fuzzy_range if pixdata[2]<255-self._fuzzy_range else 255
+        color = cv2.cvtColor(uint8([[pixdata]]),cv2.COLOR_BGR2HSV)
+        # print(color)
+        self.lower_color_lim = array([color[0][0][0],20,20])
+        self.higher_color_lim = array([color[0][0][0],255,255])
 
-    # 筛选颜色范围
-    def check_valid(self,pixdata):
-        if(pixdata[0]<self._red_lim[0] or pixdata[0]>self._red_lim[1]):
-            return False
-        if(pixdata[1]<self._green_lim[0] or pixdata[1]>self._green_lim[1]):
-            return False
-        if(pixdata[2]<self._blue_lim[0] or pixdata[2]>self._blue_lim[1]):
-            return False
-        return True
-
-    def filter_color_range(self,img):
-        original_image = array(img)#转换为cv2能用的格式
-        self.image_width = img.size[0]
-        self.image_height = img.size[1]
-        pixdata = img.load()
-        # cv2.imshow("original",original_image)
-
-        for y in range(img.size[1]):
-            for x in range(img.size[0]):
-                # 二值化
-                if not self.check_valid(pixdata[x,y]):
-                    pixdata[x, y] = (255,255,255)
-                else:
-                    pixdata[x, y] = (0,0,0)
-                    
-        image = array(img)#转换为cv2能用的格式
-        image = image[:, :, :].copy()
-        # cv2.imshow("color_filter",image)
-        
-        # result是一个y*x*color_channel的数组
-        result_wo_grid = self.remove_grid(img)
-
-        return result_wo_grid
-
-    def set_axis_type(self,xtype = AxisType.LINEAR,ytype = AxisType.LINEAR):
-        self.xaxis_type = xtype
-        self.yaxis_type = ytype
-
+    def get_color_mask(self,img):
+        hsv = cv2.cvtColor(img,cv2.COLOR_BGR2HSV)
+        mask = cv2.inRange(hsv,self.lower_color_lim,self.higher_color_lim)
+        return mask
     def set_axis_range(self,custom_range):
         # x1 x2 y1 y2
         [self.startX,self.endX,self.startY,self.endY] = custom_range
         
-    def remove_grid(self,pixdata):
-        image = array(pixdata)
-        image = image[:, :, :].copy()  
-        gray = cv2.cvtColor(image,cv2.COLOR_BGR2GRAY)#读取灰度
+    def rm_grid_bywidth(self):
+        gray = cv2.cvtColor(self.original_img,cv2.COLOR_BGR2GRAY)#读取灰度
         thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
-
         # Remove grid
-        horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (self._filter_size,self._filter_size))
-        result = cv2.erode(thresh,horizontal_kernel)
+        horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (self.grid_size,self.grid_size))
+        return cv2.erode(thresh,horizontal_kernel)
+        # return horizontal_kernel
+
+    def rm_grid(self,grid_width,grid_height):
+        # 灰度图
+        gray = cv2.cvtColor(self.original_img, cv2.COLOR_BGR2GRAY)
+        # 得到原图的拷贝，避免污染原图
+        # 二值化
+        # 由于有的网格的颜色灰度比较浅，非常接近白色的255，需要把阈值取得比较高，让尽可能多的点认定为网格点
+        ret, binary = cv2.threshold(gray, 250, 255, 0)
+        inv = 255 - binary
+        horizontal_img = inv
+        vertical_img = inv
+        # 动态调节Length，可以以图像的长和宽为参考
+        # 删除竖向的线
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (grid_height,1))
+        horizontal_img = cv2.erode(horizontal_img, kernel, iterations=1)
+        horizontal_img = cv2.dilate(horizontal_img, kernel, iterations=1)
+        
+        # 删除横向的线
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1,grid_width))
+        vertical_img = cv2.erode(vertical_img, kernel, iterations=1)
+        vertical_img = cv2.dilate(vertical_img, kernel, iterations=1)
+        # 把横向和竖向加起来
+        mask_img = horizontal_img + vertical_img
+        mask_img_inv = cv2.bitwise_not(mask_img)
+
+        result = cv2.bitwise_and(inv,mask_img_inv)
+
         return result
 
-    def remove_boarder(self,data,filter_range):
-        # filterrange，四元向量，分别是x1,x2,y1,y2
-        return data[filter_range[2]:filter_range[3],filter_range[0]:filter_range[1]]
-        
     def extract_data(self,data):
         result = []
         # data = data.T
@@ -140,64 +121,67 @@ class DataExtractor:
             self.drawing_mode = True
 
         if event == cv2.EVENT_MOUSEMOVE and self.drawing_mode:
-            self.binary_data_without_border[y-self.erase_range:y+self.erase_range,x-self.erase_range:x+self.erase_range]=0
-            blender=cv2.addWeighted(self.original_img,self._blend_transparency,tile(self.binary_data_without_border[:,:,newaxis],3),0.9,0)
+            self.mask[y-self.erase_range:y+self.erase_range,x-self.erase_range:x+self.erase_range]=0
+            masked_img = tile(self.mask[:,:,newaxis],3)
+            blender=cv2.addWeighted(self.original_img,self._blend_transparency,masked_img,1,0)
             cv2.imshow("masked image",blender)
         
-
         if event == cv2.EVENT_LBUTTONUP:
             self.drawing_mode = False
-            # cv2.imshow("extracted image",self.binary_data_without_border)
-        # mouseX,mouseY = x,y
+
+
     def pick_color(self,event,x,y,flags,param):
         if event == cv2.EVENT_LBUTTONDOWN:
             self.color_set = self.original_img[y][x]
             print("当前选择颜色为:")
             print(self.color_set)
 
-    def extract(self,img):
-        # self.width = img.size[0]
-        # self.height = img.size[1]
-        # 根据颜色范围选择要用到的数据
-        self.original_img = array(img)#转换为cv2能用的格式
-        self.original_img  = self.original_img [:, :, :].copy()
+    def filter_grid(self):
+        grid_mask = self.rm_grid(int(self.image_width*0.8),int(self.image_height*0.8))
+        # 扩展数组
+        grid_mask_new = np.zeros([*grid_mask.shape,3],dtype=np.uint8)
+        # 填充颜色
+        grid_mask_new[grid_mask[:,:]==255,1]=255
+        blender=cv2.addWeighted(self.original_img,1,grid_mask_new,1,0)
+        cv2.imshow("original image",blender)
+        self.mask = grid_mask_new[:,:,1]
 
-        self.original_img = cv2.cvtColor(self.original_img, cv2.COLOR_BGR2RGB)
+    def extract(self,color_mode):
+        if(color_mode == False):
+            self.mask = self.rm_grid(int(0.4*self.image_width),int(0.4*self.image_height))
 
-        # 显示原图，让用户选择颜色
-        cv2.namedWindow("original image")
-        cv2.moveWindow("original image", 40,30)  # Move it to (40,30)
-        cv2.imshow("original image",self.original_img)
-        cv2.setMouseCallback("original image",self.pick_color)
+        else:
+            # 显示原图，让用户选择颜色
+            # 通过一个函数触发修改grid大小的函数
+            cv2.namedWindow("original image")
+            cv2.moveWindow("original image", 40,30)  # Move it to (40,30)
+            cv2.imshow("original image",self.original_img)
+            cv2.setMouseCallback("original image",self.pick_color)
 
-        # 检测键盘输入，如果键盘输入回车，进入下一步
-        while(1):
-            k = cv2.waitKey(20) & 0xFF
-            if k == 27:
-                break
-            elif k == 13:
-                # 直到检测到颜色输入为止
-                if(self.color_set is not None):
-                    self.set_fuzzy_color_range(self.color_set[::-1])
+            # 检测键盘输入，如果键盘输入回车，进入下一步
+            # 筛选颜色
+            while(1):
+                k = cv2.waitKey(20) & 0xFF
+                if k == 27:
+                    break
+                elif k == 13:
+                    # 直到检测到颜色输入为止
                     cv2.destroyWindow("original image")
-                else:
-                    continue
-                break
-        # 筛选颜色
-        binary_data = self.filter_color_range(img)
-        # 去除边界
-        self.binary_data_without_border = binary_data
-        # binary_data_without_border = self.remove_boarder(binary_data,[self._x1,self._x2,self._y1,self._y2])
-        # 提取数据点
+                    break
+            self.set_fuzzy_color_range(self.color_set)
+            self.mask = self.get_color_mask(self.original_img)
 
-        # 混合原图和筛选的图
-        blender=cv2.addWeighted(self.original_img,self._blend_transparency,tile(self.binary_data_without_border[:,:,newaxis],3),0.9,0)
+        # keyboard.wait('a')
+        cv2.destroyWindow("original image")
+        self.filtered_img = tile(self.mask[:,:,newaxis],3)
+
+        blender=cv2.addWeighted(self.original_img,self._blend_transparency,self.filtered_img,1,0)
         
         cv2.namedWindow("masked image")
         cv2.moveWindow("masked image", 40,30)  # Move it to (40,30)
         cv2.imshow("masked image",blender)
 
-        # 让用户去除不要的数据点
+        # # 让用户去除不要的数据点
         cv2.setMouseCallback('masked image',self.erase_noise)
         while(1):
             k = cv2.waitKey(20) & 0xFF
@@ -207,8 +191,7 @@ class DataExtractor:
             elif k == 13:
                 # cv2.imshow("after",self.binary_data_without_border)
                 cv2.destroyWindow("masked image")
-                extracted_data = self.extract_data(self.binary_data_without_border)
+                extracted_data = self.extract_data(self.mask)
                 # 数据点映射坐标
                 mapped_data = self.data_mapping(extracted_data)
                 return mapped_data
-

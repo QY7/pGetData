@@ -1,7 +1,8 @@
 from DataExtractor import DataExtractor,AxisType
 from PIL import Image
 from PIL import ImageGrab
-from numpy import array,savetxt
+from numpy import array,savetxt,tile,newaxis
+import numpy as np
 import cv2
 import matplotlib.pyplot as plt
 from ui import Ui_MainWindow
@@ -36,41 +37,65 @@ class mywindow(QMainWindow,Ui_MainWindow):
     def __init__(self):
         super(mywindow,self).__init__()
         self.setupUi(self)
+        self.extractor = DataExtractor()
+        self.color_mode = False
+        self.load_state = False
+        self.result = None
 
-    #定义槽函数
-    def hello(self):
-        self.lineEdit_3.setText("hello world")
+    def load_img(self):
+        try:
+            img = np.array(ImageGrab.grabclipboard())
+            img = cv2.cvtColor(img,cv2.COLOR_RGB2BGR)
+        except TypeError as e:
+            print(e)
+        # try:
+        # except:
+        #     return
+        if len(array(img).shape)!=3:
+            return False
+        self.load_state = True
+        self.extractor.original_img = img
+        self.extractor.image_width = img.shape[1]
+        self.extractor.image_height = img.shape[0]
+        return True
 
-    def extract_data(self):
+    def extract_data(self,mode):
         try:
             xmin = float(self.lineEdit.text())
             xmax = float(self.lineEdit_2.text())
             ymin = float(self.lineEdit_4.text())
             ymax = float(self.lineEdit_3.text())
+            self.extractor.xaxis_type = AxisType.LOG if self.checkBox_2.isChecked() else AxisType.LINEAR
+            self.extractor.yaxis_type = AxisType.LOG if self.checkBox.isChecked() else AxisType.LINEAR
         except:
             return
-        d1 = DataExtractor()
-        # #读取文件
-        # img = Image.open('img/8.jpg')
+        # xmin = 1
+        # xmax = 2
+        # ymin = 3
+        # ymax = 4
         drawing_mode = False
-        img = ImageGrab.grabclipboard()
-        # 读取剪切板
-        if len(array(img).shape)!=3:
+        if(self.load_img()):
+            self.extractor.set_axis_range([xmin,xmax,ymin,ymax])
+            self.result =self.extractor.extract(mode)
+            
+            plot_value(self.result,xaxis_type=self.extractor.xaxis_type,yaxis_type=self.extractor.yaxis_type)
+            cv2.waitKey()
+
+    def color_extractor(self):
+        if(self.checkBox_black.isChecked()):
+            self.extract_data(mode=False)
+        else:
+            self.extract_data(mode=True)
+
+    def eraser_size_change(self):
+        self.extractor.erase_range = self.Eraser_size.value()
+
+    def export_data(self):
+        try:
+            filename=QFileDialog.getSaveFileName(self,'save file',filter="Txt files(*.txt)")
+            savetxt(filename,self.result,delimiter='; ')
+        except:
             return
-
-        d1.set_axis_type(xtype = AxisType.LINEAR,ytype = AxisType.LINEAR)
-
-        # print("Step4. 输入坐标轴类型\n")
-        d1.xaxis_type = AxisType.LOG if self.checkBox_2.isChecked() else AxisType.LINEAR
-        d1.yaxis_type = AxisType.LOG if self.checkBox.isChecked() else AxisType.LINEAR
-
-
-        d1.set_axis_range([xmin,xmax,ymin,ymax])
-        # print("Step5. 单击选择颜色\n")
-        result = d1.extract(img)
-        savetxt("..\\test.txt",result)
-        plot_value(result,xaxis_type=d1.xaxis_type,yaxis_type=d1.yaxis_type)
-        cv2.waitKey()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
@@ -79,5 +104,10 @@ if __name__ == "__main__":
     window.show()
     window.setWindowTitle("DataExtractor")
     window.setWindowIcon(QIcon('img/computer.ico'))
-    window.pushButton.clicked.connect(window.extract_data)
+
+    window.pushButton_start.clicked.connect(window.color_extractor)
+    window.pushButton_export.clicked.connect(window.export_data)
+
+    window.Eraser_size.valueChanged.connect(window.eraser_size_change)
+    # window.Grid_size.valueChanged.connect(window.grid_size_change)
     sys.exit(app.exec_())
